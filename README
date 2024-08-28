@@ -1,0 +1,8 @@
+In eric-enm-chart-hooks, update to the latest version of the backup-restore-cli module if changes are needed.
+    git submodule sync
+    git submodule update --init --recursive
+
+    git add .
+    git commit -m "TORF-....: Updating to use latest backup-restore-cli repo"
+    git push origin HEAD:refs/for/master
+

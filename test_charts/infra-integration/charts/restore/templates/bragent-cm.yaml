@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.brAgent.config }}
+  labels:
+    app: restore
+data:
+  config.yaml: |
+    agent:
+      registration:
+        name: restore-bragent-name
+        id: restore-bragent-id
+    backup:
+      paths:
+        - path: "/var/bragent/data/"
+          compression: none
+      preCmd: "mkdir -p /var/bragent/data && echo agent.pre-backup > /var/bragent/data/bro.state && touch /var/bragent/data/some_file"
+      postCmd: "echo agent.post-backup > /var/bragent/data/bro.state"
+    restore:
+      preCmd: "echo agent.pre-restore > /var/bragent/data/bro.state"
+      postCmd: "echo agent.post-restore > /var/bragent/data/bro.state"
+    softwareVersion:
+      description: "Test agent for sidecar BRO agent"
+      productName: restoreProductName
+      productNumber: "CXC 9999999"
+      productionDate: {{ date "2006-01-02T15:04:05Z" .Release.Time }}
+      revision: "1.1.0-42"
+      type: "test"
+    bro:
+      host: {{ .Values.brAgent.broServiceName | quote }}

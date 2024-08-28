@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.brAgent.config }}
+  labels:
+    app: rollback
+data:
+  config.yaml: |
+    agent:
+      registration:
+        name: eric-enm-mdt-bro-agent
+        id: eric-enm-mdt-bro-agent-id
+        scopes: ROLLBACK
+    backup:
+      paths:
+        - path: "/var/bragent/data/"
+          compression: none
+      preCmd: "mkdir -p /var/bragent/data && echo agent.pre-backup > /var/bragent/data/bro.state && touch /var/bragent/data/some_file"
+      postCmd: "echo agent.post-backup > /var/bragent/data/bro.state"
+    rollback:
+      preCmd: "echo agent.pre-rollback > /var/bragent/data/bro.state"
+      postCmd: "echo agent.post-rollback > /var/bragent/data/bro.state"
+    softwareVersion:
+      description: "Test agent for sidecar BRO agent"
+      productName: rollbackProductName
+      productNumber: "CXC 9999999"
+      productionDate: {{ date "2006-01-02T15:04:05Z" .Release.Time }}
+      revision: "1.1.0-42"
+      type: "test"
+    bro:
+      host: {{ .Values.brAgent.broServiceName | quote }}

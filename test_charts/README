@@ -1,0 +1,6 @@
+Start minikube
+    minikube start
+Install the eric-enm-bro-integration chart using the minikube_values.yaml
+    helm install eric-enm-bro-integration /home/eeipca/ftp_storage/enm1540/21.12.24/eric-enm-bro-integration-1.8.0-6-SNAPSHOT.tgz -f minikube_values.yaml --wait
+Install the test-infra chart
+    helm install test-infra test-infra -f minikube_values.yaml --wait

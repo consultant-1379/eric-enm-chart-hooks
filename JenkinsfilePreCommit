@@ -1,0 +1,187 @@
+#!/usr/bin/env groovy
+
+/* IMPORTANT:
+ *
+ * In order to make this pipeline work, the following configuration on Jenkins is required:
+ * - slave with a specific label (see pipeline.agent.label below)
+ * - credentials plugin should be installed and have the secrets with the following names:
+ *   + lciadm100credentials (token to access Artifactory)
+ * PCR Jenkins Job for eric-enm-chart-hooks
+ */
+
+def bob = "bob/bob -r \${WORKSPACE}/ruleset2.0.yaml"
+def lastStage = ''
+
+pipeline {
+    agent {
+        label 'Cloud_Native_Dev'
+    }
+    environment {
+        RELEASE = false
+    }
+    stages {
+        stage('Inject Credential Files') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                }
+                withCredentials([file(credentialsId: 'lciadm100-docker-auth', variable: 'dockerConfig')]) {
+                    sh "install -m 600 ${dockerConfig} ${HOME}/.docker/config.json"
+                }
+            }
+        }
+
+        stage('Checkout Cloud-Native Git Repository') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                    if (env.GERRIT_CHANGE_NUMBER) {
+                        checkout changelog: true, \
+                        scm: [$class: 'GitSCM', \
+                        branches: [[name: "$GERRIT_REFSPEC"]], \
+                        doGenerateSubmoduleConfigurations: false, \
+                        extensions: [[$class: 'BuildChooserSetting', buildChooser: [$class: 'GerritTriggerBuildChooser']], \
+                        [ $class: 'SubmoduleOption', \
+                            disableSubmodules: false, \
+                            parentCredentials: true, \
+                            recursiveSubmodules: false, \
+                            reference: '', \
+                            trackingSubmodules: true \
+                        ]], \
+                        submoduleCfg: [], \
+                        userRemoteConfigs: [[refspec: "${GERRIT_REFSPEC}", \
+                        url: "${GERRIT_MIRROR}/${GERRIT_PROJECT}"]]]
+                    } else {
+                        println "No GERRIT_CHANGE_NUMBER"
+                        git changelog: true, poll: false, url: '${GERRIT_MIRROR}/${REPO}'
+                    }
+                }
+            }
+        }
+
+        /* WORKAROUND:
+         *
+         * To avoid '.dirty' version generation:
+         *  - Force remove submodule directories
+         *  - Run 'git checkout -- .' to discard any local changes
+         * Note: The 'git clean -xdff' command usually fails to remove pycache and some other files.
+         */
+        stage('Prepare') {
+            steps {
+                script {
+                    last_stage = env.STAGE_NAME
+                }
+                sh 'git status'
+                sh 'sudo rm -rf bob/ testframework/ test/bur_cli/'
+                sh 'git checkout -- .'
+                sh 'git status'
+                sh 'git submodule sync'
+                sh 'git submodule update --init --force'
+                sh './bob/bob --help'
+            }
+        }
+
+        stage('Init') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                }
+                sh "${bob} init-precodereview"
+            }
+        }
+
+        stage('Linting') {
+            steps {
+                parallel(
+                        "python-lint": {
+                            sh "${bob} lint:python-lint"
+                        },
+                        "dockerfile-lint": {
+                            sh "${bob} lint:dockerfile-lint"
+                        }
+                )
+            }
+            post {
+                failure {
+                    script {
+                        lastStage = env.STAGE_NAME
+                    }
+                }
+            }
+        }
+
+        stage('Run unit tests') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                }
+                sh "${bob} unit-tests"
+            }
+            post {
+                always {
+                    archiveArtifacts 'cover/*.html'
+                    archiveArtifacts 'cover/coverage_html.js'
+                    archiveArtifacts 'cover/style.css'
+                }
+            }
+        }
+
+        stage('Build docker image') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                }
+                sh "${bob} build-image-internal"
+            }
+            post {
+                failure {
+                    script {
+                        sh "${bob} remove-image-with-all-tags-internal"
+                    }
+                }
+            }
+        }
+
+        stage('Publish Images to Artifactory') {
+            steps {
+                script {
+                    lastStage = env.STAGE_NAME
+                }
+                sh "${bob} push-image-with-all-tags-internal"
+            }
+            post {
+                always {
+                    sh "${bob} remove-image-with-all-tags-internal"
+                }
+            }
+        }
+        stage('Execute Hook Test') {
+            steps {
+                script {
+                    def IMAGE_TAG = sh(script: "cat .bob/var.version", returnStdout:true).trim()
+                    sh "printf ${IMAGE_TAG}"
+                    build job: 'eric-enm-chart-hooks-itests', parameters: [
+                            string(name: 'NAMESPACE', value: 'hook-test-ns'),
+                            string(name: 'IMAGE_TAG', value: "${IMAGE_TAG}"),
+                            string(name: 'GERRIT_CHANGE_NUMBER', value: "${GERRIT_CHANGE_NUMBER}"),
+                            string(name: 'GERRIT_REFSPEC', value: "${GERRIT_REFSPEC}"),
+                            string(name: 'GERRIT_MIRROR', value: "${GERRIT_MIRROR}"),
+                            string(name: 'GERRIT_PROJECT', value: "${GERRIT_PROJECT}"),
+                    ]
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            mail to: "${env.GERRIT_CHANGE_OWNER_EMAIL},${env.GERRIT_PATCHSET_UPLOADER_EMAIL}",
+                    from: "${env.GIT_COMMITTER_EMAIL}",
+                    subject: "Failed Pipeline for eric-enm-chart-hooks: ${env.GERRIT_CHANGE_SUBJECT} - ${currentBuild.fullDisplayName}",
+                    body: "Failure on ${env.BUILD_URL} in stage ${lastStage}"
+        }
+        always {
+            sh "sudo rm -rf ${env.WORKSPACE}/*"
+        }
+    }
+}

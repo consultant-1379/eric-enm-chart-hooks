@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.global.restore.configMap.name }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    chart: {{ template "infra-integration.chart" . }}
+    app.kubernetes.io/name: {{ template "infra-integration.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+data:
+  RESTORE_STATE: {{ .Values.global.restore.state | quote }}
+  RESTORE_SCOPE: {{ .Values.global.restore.scope | quote }}
+  RESTORE_BACKUP_NAME: {{ .Values.global.restore.backupName | quote }}

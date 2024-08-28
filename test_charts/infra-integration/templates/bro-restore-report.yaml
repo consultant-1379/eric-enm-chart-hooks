@@ -1,0 +1,39 @@
+{{ if .Values.global.restore.backupName }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ template "infra-integration.broRestoreReportJobName" . }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+    chart: {{ template "infra-integration.chart" . }}
+    app.kubernetes.io/name: {{ template "infra-integration.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name | quote }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": {{ index .Values "images" "eric-enm-chart-hooks" "hook-post-weight" | quote }}
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      name: {{ template "infra-integration.broRestoreReportJobName" . }}
+      labels:
+        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
+        app.kubernetes.io/instance: {{ .Release.Name | quote }}
+        helm.sh/chart: {{ template "infra-integration.chart" . }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: "{{ .Values.global.restore.serviceaccount -}}"
+      containers:
+        - name: executor
+          image: {{ .Values.global.registry.url }}/{{ .Values.imageCredentials.repoPath }}/{{ index .Values "images" "eric-enm-chart-hooks" "name" }}:{{ index .Values "images" "eric-enm-chart-hooks" "tag" }}
+          imagePullPolicy: {{ .Values.imageCredentials.pullPolicy }}
+          command: [ "/bin/sh", "-c"]
+          args:
+            - exec_hook bro_restore_report.py -c {{ .Values.global.restore.configMap.name }} -s {{ .Values.global.restore.scope }}
+          env:
+            - name: BRO_HOST
+              value: {{ index .Values "images" "eric-enm-chart-hooks" "broServiceName" | default "eric-ctrl-bro" }}
+            - name: BRO_PORT
+              value: "{{ index .Values "images" "eric-enm-chart-hooks" "broServicePort" | default "7001" }}"
+{{- end}}

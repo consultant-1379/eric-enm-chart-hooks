@@ -1,0 +1,65 @@
+deploy_sftp:
+  py:
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bur-sftp-secret
+stringData:
+  users.yaml: |
+    users:
+      - user: brsftp
+        groups: [users]
+        encryptedPass: $6$xyz$iCbSyc4b/2wTlZmnEMW7tCaUeKEQJAqgjzWqvW57A1Ffj/1HbBonjoOH8pB57nHxFNt4oDLXNJ.sKwnCXeCQk0
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bur-sftp-server
+  labels:
+    app: bur-sftp-server
+    release: bur-sftp-server
+spec:
+  selector:
+    matchLabels:
+      app: bur-sftp-server
+      release: bur-sftp-server
+  replicas: 1
+  serviceName: bur-sftp-server
+  template:
+    metadata:
+      labels:
+        app: bur-sftp-server
+        release: bur-sftp-server
+    spec:
+      imagePullSecrets:
+        - name: armdocker
+      containers:
+        - name: bur-sftp-server
+          image: "armdocker.rnd.ericsson.se/proj-adp-eric-ctrl-bro-internal-dev/utils/pm/eric-pm-sftp:1.4.0-36"
+          ports:
+            - containerPort: 22
+          env:
+            - name: USERFILE
+              value: "true"
+          volumeMounts:
+            - name: bur-sftp-server-data
+              mountPath: /bro_test
+            - name: bur-sftp-server-user-config-volume
+              mountPath: /etc/opt/
+              readOnly: true
+          resources:
+            requests:
+              cpu: 30m
+              memory: 50Mi
+            limits:
+              cpu: 30m
+              memory: 50Mi
+      volumes:
+        - name: bur-sftp-server-data
+          emptyDir: {}
+        - name: bur-sftp-server-user-config-volume
+          secret:
+            secretName: bur-sftp-secret
+            items:
+              - key: users.yaml
+                path: pm_sftp_users.yaml

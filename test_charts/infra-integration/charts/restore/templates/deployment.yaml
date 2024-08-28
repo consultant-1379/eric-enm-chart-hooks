@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: restore
+spec:
+  selector:
+    matchLabels:
+      app: restore
+  replicas: 1
+  minReadySeconds: 2
+  template:
+    metadata:
+      labels:
+        app: restore
+        # agent.registration.name in the agents config -> infra-integration/charts/restore/templates/bragent-cm.yaml
+        adpbrlabelkey: restore-bragent-name
+    spec:
+      volumes:
+        - name: state-volume
+          emptyDir: { }
+        - name: bragent-config
+          configMap:
+            name: {{ .Values.brAgent.config }}
+      containers:
+        - name: bragent
+          image: {{ .Values.global.registry.url }}/{{ .Values.imageCredentials.repoPath }}/{{ .Values.images.bragent.name }}:{{ .Values.images.bragent.tag }}
+          imagePullPolicy: {{ .Values.imageCredentials.pullPolicy }}
+          command: [ "/bin/sh", "-c", "/opt/ericsson/backup-restore-agent/bragent" ]
+          volumeMounts:
+            - mountPath: /etc/bragent/agent
+              name: bragent-config
+              readOnly: true
+            - mountPath: /var/bragent
+              name: state-volume
+        - name: restore
+          image: {{ .Values.global.registry.url }}/{{ .Values.imageCredentials.repoPath }}/{{ .Values.images.eric_enm_sles.name }}:{{ .Values.images.eric_enm_sles.tag }}
+          imagePullPolicy: {{ .Values.imageCredentials.pullPolicy }}
+          command: [ "/bin/sh", "-c", "while true; do sleep 1; done" ]
+          env:
+          - name: BRO_HOST
+            value: {{ .Values.brAgent.broServiceName }}
+          - name: BRO_PORT
+            value: {{ .Values.brAgent.broServicePort | quote }}

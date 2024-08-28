@@ -1,0 +1,139 @@
+#!/usr/bin/env groovy
+def bob = './bob/bob'
+def GIT_COMMITTER_NAME = 'lciadm100'
+def GIT_COMMITTER_EMAIL = 'lciadm100@ericsson.com'
+def failedStage = ''
+def ruleset = 'ruleset.IT.yaml'
+
+pipeline {
+    agent {
+        node {
+            label 'Cloud_Native_Dev'
+        }
+    }
+    environment{
+        GIT_COMMITTER_NAME = "${GIT_COMMITTER_NAME}"
+        GIT_COMMITTER_EMAIL = "${GIT_COMMITTER_EMAIL}"
+    }
+    parameters {
+        string(name: 'KUBECONFIG_FILE', defaultValue: 'cn_enm_bra', description: 'Kubernetes configuration file to specify which environment to install on' )
+        string(name: 'IMAGE_TAG', defaultValue: 'latest', description: 'PCR Docker image version')
+        string(name: 'GERRIT_CHANGE_NUMBER', defaultValue: '', description: 'GERRIT_CHANGE_NUMBER')
+        string(name: 'GERRIT_REFSPEC', defaultValue: '', description: 'GERRIT_REFSPEC')
+        string(name: 'GERRIT_MIRROR', defaultValue: '', description: 'GERRIT_MIRROR')
+        string(name: 'GERRIT_PROJECT', defaultValue: '', description: 'GERRIT_PROJECT')
+    }
+    options {
+        timestamps()
+        timeout(time: 1, unit: 'HOURS')
+    }
+    stages {
+        stage('Inject Credential Files') {
+            steps {
+                withCredentials([file(credentialsId: 'lciadm100-docker-auth', variable: 'dockerConfig')]) {
+                    sh "install -m 600 ${dockerConfig} ${HOME}/.docker/config.json"
+                }
+            }
+        }
+        stage('Checkout Cloud-Native Git Repository') {
+            steps {
+                script {
+                    if (env.GERRIT_CHANGE_NUMBER) {
+                        checkout changelog: true, \
+                        scm: [$class: 'GitSCM', \
+                        branches: [[name: "$GERRIT_REFSPEC"]], \
+                        doGenerateSubmoduleConfigurations: false, \
+                        extensions: [[$class: 'BuildChooserSetting', buildChooser: [$class: 'GerritTriggerBuildChooser']], \
+                        [ $class: 'SubmoduleOption', \
+                            disableSubmodules: false, \
+                            parentCredentials: true, \
+                            recursiveSubmodules: false, \
+                            reference: '', \
+                            trackingSubmodules: true \
+                        ]], \
+                        submoduleCfg: [], \
+                        userRemoteConfigs: [[refspec: "${GERRIT_REFSPEC}", \
+                        url: "${GERRIT_MIRROR}/${GERRIT_PROJECT}"]]]
+                    } else {
+                        println "No GERRIT_CHANGE_NUMBER"
+                        git changelog: true, poll: false, url: '${GERRIT_MIRROR}/${REPO}'
+                    }
+                }
+            }
+        }
+        stage('Prepare bob') {
+            steps {
+                sh 'rm -rf bob/ testframework/ test/bur_cli/'
+                sh 'git submodule sync'
+                sh 'git submodule update --init --remote --force'
+                dir('testframework') {
+                    sh 'git checkout 60c3bca'
+                }
+                sh "${bob} --help"
+            }
+        }
+        stage('Create NS & deploy-bro') {
+            steps {
+                build job: 'backup-restore-agent-deploy-bro', parameters: [
+                        string(name: 'NAMESPACE', value: 'hook-test-ns'),
+                        string(name: 'BRO_HELM_CHART_NAME', value: 'eric-enm-bro-integration'),
+                        string(name: 'RECREATE', value: 'true')
+                ]
+            }
+        }
+        stage('Deploy SFTP') {
+            steps {
+                script {
+                    withCredentials([file(credentialsId: 'cn_enm_bra', variable: 'KUBECONFIG')]) {
+                        echo 'Starting SFTP deployment....'
+                        sh "${bob} -r ${ruleset} deploy-sftp"
+                    }
+                }
+            }
+        }
+        stage('File Modification') {
+            steps {
+                script {
+                    echo "${IMAGE_TAG}"
+                    env.IMAGE_PATH = "armdocker.rnd.ericsson.se/proj_oss_releases/enm/eric-enm-chart-hooks:${IMAGE_TAG}"
+                    sh 'sed -i "s|image=this_pod\\.spec\\.containers\\[0\\]\\.image|image=\'${IMAGE_PATH}\'|" src/bro_restore_trigger.py'
+                }
+            }
+        }
+        stage('BUR Test') {
+            steps {
+                script {
+                    withCredentials( [file(credentialsId: 'cn_enm_bra', variable: 'KUBECONFIG')]) {
+                        sh "${bob} -r ${ruleset} bur-test"
+                    }
+                }
+            }
+            post {
+                failure {
+                    script {
+                        failedStage = env.STAGE_NAME
+                    }
+                }
+                always {
+                    sh "touch testdeploy.log"
+                    sh "mv testdeploy.log bur_test.log"
+                    archiveArtifacts 'bur_test_output.html'
+                    archiveArtifacts 'bur_test.log'
+                }
+            }
+        }
+        stage('Clean up Namespace') {
+            steps {
+                build job: 'backup-restore-agent-cleanup', parameters: [
+                        string(name: 'NAMESPACE', value: 'hook-test-ns')
+                ]
+            }
+        }
+    }
+    post {
+        always {
+            sh "sudo rm -rf ${env.WORKSPACE}/*"
+            deleteDir()
+        }
+    }
+}

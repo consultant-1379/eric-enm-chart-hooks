@@ -1,0 +1,14 @@
+[submodule "bob"]
+	path = bob
+	url = ../../../../../adp-cicd/bob
+	branch = master
+	ignore = dirty
+[submodule "testframework"]
+	path = testframework
+	url = ../../../../../AIA/microservices/testframework
+	ignore = dirty
+[submodule "test/bur_cli"]
+	path = test/bur_cli
+	url = ../../../../com.ericsson.oss.itpf/backup-restore-cli
+	branch = master
+	ignore = dirty

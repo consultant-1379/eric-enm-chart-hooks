@@ -1,0 +1,25 @@
+global:
+  registry:
+    url: armdocker.rnd.ericsson.se
+  restore:
+    configMap:
+      name: backup-restore-configmap
+    state: ""
+    scope: ""
+    backupName: ""
+    serviceaccount: "eric-enm-bro-integration"
+
+imageCredentials:
+  repoPath: proj_oss_releases/enm
+  pullPolicy: Always
+
+images:
+  eric-enm-chart-hooks:
+    name: eric-enm-chart-hooks
+    tag: INH_eeipca_eric-enm-chart-hooks
+    hook-pre-weight: -99
+    hook-post-weight: 99
+
+brAgent:
+  broServiceName: eric-ctrl-bro
+  broServicePort: 7001

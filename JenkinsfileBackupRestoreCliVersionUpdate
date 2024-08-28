@@ -1,0 +1,28 @@
+#!/usr/bin/env groovy
+
+def bob = "bob/bob -r \${WORKSPACE}/ruleset2.0.yaml"
+
+pipeline {
+    agent {
+        node {
+            label "Cloud_Native_Dev"
+        }
+    }
+
+    parameters {
+        string(name: 'IMAGE_TAG', description: 'The image tag for backup-restore-cli (e.g. 1.0.0-7)')
+    }
+
+    stages {
+        stage('Update Backup Restore CLI version') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'axisadm_gerrit_password',
+                                 usernameVariable: 'GERRIT_USERNAME',
+                                 passwordVariable: 'GERRIT_PASSWORD')])
+                {
+                    sh "${bob} -r bob/ruleset2.0.yaml create-new-cbo-patch"
+                }
+            }
+        }
+    }
+}

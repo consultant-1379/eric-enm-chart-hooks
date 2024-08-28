@@ -1,0 +1,19 @@
+global:
+  registry:
+    url: armdocker.rnd.ericsson.se
+
+imageCredentials:
+  repoPath: proj-enm
+
+images:
+  eric_enm_sles:
+    name: eric-enm-sles-base
+    tag: latest
+  bragent:
+    name: backup-restore-agent
+    tag: latest
+
+brAgent:
+  config: "restore-bragent-config"
+  broServiceName: eric-ctrl-bro
+  broServicePort: 7001

@@ -1,0 +1,54 @@
+modelVersion: 2.0
+
+docker-images:
+
+
+  - py3-kube-helm: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/bob-py3kubehelmbuilder:2.0.3-1
+
+properties:
+  - helm-chart-repo: https://arm.seli.gic.ericsson.se/artifactory/proj-enm-helm-local/
+  - helm-chart-name: bra-test-chart
+  - image-registry: armdocker.rnd.ericsson.se
+  - namespace: hook-test-ns
+  - bro-chart-version: latest
+  - bur-nose-test: 'export PYTHONPATH=/src/:/test/:/test/bur_cli/src/:/testframework/;nosetests  -vs --with-html --html-file=bur_test_output.html --where=/test'
+
+env:
+  - PWD (default=$PWD)
+  - KUBECONFIG
+
+var:
+  - sftp-pod-ip
+
+rules:
+  deploy-sftp:
+    - task: deploy-sftp
+      docker-image: py3-kube-helm
+      docker-flags:
+        - "--env KUBECONFIG=${env.KUBECONFIG}"
+        - "--env HELM_HOME=/home/helmuser/.helm"
+        - "--volume ${env.KUBECONFIG}:${env.KUBECONFIG}:ro"
+        - "--volume ${env.PWD}:${env.PWD}"
+      cmd: python -u test/deploy_sftp.py ${namespace} > .bob/var.sftp-pod-ip
+
+  bur-test:
+    - task: bur-test
+      docker-image: py3-kube-helm
+      docker-flags:
+        - "--env KUBECONFIG=${env.KUBECONFIG}"
+        - "--env HELM_HOME=/home/helmuser/.helm"
+        - "--volume ${env.KUBECONFIG}:${env.KUBECONFIG}:ro"
+        - "--volume ${env.PWD}:${env.PWD}"
+      cmd:  python -u testframework/bootstrap.py -k ${env.KUBECONFIG}
+        -n ${namespace}
+        -c None
+        -r ${helm-chart-repo}
+        -b ${bro-chart-version}
+        -t deployment
+        -m ${helm-chart-name}
+        -d false
+        --fail-first=False
+        --test-params SFTP_POD_IP=${var.sftp-pod-ip}
+        --test-runner-cmdline "${bur-nose-test}"
+        --output-html="bur_test_output.html"
+        --copy-directories=src

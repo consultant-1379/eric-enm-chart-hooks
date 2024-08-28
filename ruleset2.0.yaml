@@ -1,0 +1,210 @@
+modelVersion: 2.0
+
+docker-images:
+  # in ADP GS environment use the 'latest' tag, as testing may contain potentially
+  # unstable/not tested content
+  - adp-release-auto: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/bob-adp-release-auto:testing
+  - doc-builder: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/bob-docbuilder:latest
+
+properties:
+  - docker-parent-image-name: backup-restore-cli-base
+  - docker-image-name: eric-enm-chart-hooks
+  - docker-image-path: armdocker.rnd.ericsson.se/proj-enm/${docker-image-name}
+  - docker-internal-image-path: armdocker.rnd.ericsson.se/proj_oss_releases/enm/${docker-image-name}
+  - python3-builder: armdocker.rnd.ericsson.se/proj-adp-cicd-drop/bob-python3builder:2.9.2
+  - docker-params: "--workdir ${env.PWD}"
+
+import:
+  common: common-properties.yaml
+
+env:
+  - PWD (default = $(pwd))
+  - RELEASE (default=true)
+  - BUILD_DATE (default = $(date +%d%m%Y-%H%M%S --utc))
+  - AUTHOR_NAME
+  - AUTHOR_EMAIL
+  - GIT_COMMITTER_NAME
+  - GIT_COMMITTER_EMAIL
+  - COMMIT_MESSAGE
+  - BACKUP_RESTORE_CLI_VERSION
+
+var:
+  - version
+  - version-prefix
+  - rstate
+  - commit-hash
+
+rules:
+  release:
+    - rule: clean
+    - rule: lint
+
+  # Make sure repo is clean
+  clean:
+    - task: rm
+      cmd:
+        - rm -rf .bob/
+        - rm -rf build/
+
+  init-precodereview:
+    - task: generate-version
+      docker-image: adp-release-auto
+      cmd: generate-version -f VERSION_PREFIX --is-release ${env.RELEASE} --output version
+
+    - task: set-version-prefix
+      cmd: cat VERSION_PREFIX > .bob/var.version-prefix
+
+    - task: rstate
+      docker-image: adp-release-auto
+      cmd: get_rstate.py ${var.version} > .bob/var.rstate
+
+    - task: commit
+      docker-image: adp-release-auto
+      cmd: git rev-parse --short HEAD > .bob/var.commit-hash
+
+    - task: checkout-backup-restore-cli-version
+      cmd: cd test/bur_cli && git checkout tags/${common.backup-restore-cli-version}
+
+  create-new-cbo-patch:
+    - task: create-new-cbo-patch
+      docker-image: adp-release-auto
+      docker-flags:
+        - "--env GERRIT_USERNAME"
+        - "--env GERRIT_PASSWORD"
+      cmd:
+        - "sed -i 's/backup-restore-cli-version: .*/backup-restore-cli-version: ${env.IMAGE_TAG}/' common-properties.yaml"
+        - gerrit create-patch
+          --file common-properties.yaml
+          --message "NO-JIRA Update Backup Restore CLI image version to ${env.IMAGE_TAG}"
+          --git-repo-local .
+          --wait-label "Verified"="+1"
+          --debug
+          --email PDLENIGMAE@pdl.internal.ericsson.com
+          # If user does not have email set --email ${env.EMAIL}
+          #
+
+  # Run lint to check readme files, source code and dockerfile lint
+  lint:
+    - task: python-lint
+      cmd: docker run --init --rm  --volume $(pwd):$(pwd) --workdir $(pwd) ${python3-builder} scripts/python-lint.sh
+
+    - task: dockerfile-lint
+      cmd: docker run --rm -i -v $(pwd)/scripts/hadolint.yml:/.config/hadolint.yaml hadolint/hadolint < Dockerfile
+
+  # Run unit tests
+  unit-tests:
+    - task: python-tests
+      cmd: docker run --init --rm  --volume $(pwd):$(pwd) --workdir $(pwd) ${python3-builder} scripts/unittests.sh
+
+  # Build docker image internal
+  build-image-internal:
+    - task: docker-build
+      cmd:
+        - docker build ${env.PWD} --build-arg GIT_COMMIT=${var.commit-hash} --build-arg BACKUP_RESTORE_CLI_VERSION=${common.backup-restore-cli-version} --build-arg BUILD_DATE=${env.BUILD_DATE} --build-arg IMAGE_BUILD_VERSION=${var.version} --build-arg RSTATE=${var.rstate} --tag ${docker-internal-image-path}:${var.version}
+        - docker image tag ${docker-internal-image-path}:${var.version} ${docker-internal-image-path}:${var.version-prefix}-latest
+        - docker image tag ${docker-internal-image-path}:${var.version} ${docker-internal-image-path}:latest
+
+  # Push docker image internal
+  push-image-with-all-tags-internal:
+    - task: push-docker-image
+      cmd:
+        - docker push ${docker-internal-image-path}:${var.version}
+        - docker push ${docker-internal-image-path}:${var.version-prefix}-latest
+        - docker push ${docker-internal-image-path}:latest
+  # Remove docker image internal
+  remove-image-internal:
+    - task: remove-docker-image
+      cmd:
+        - docker image remove ${docker-internal-image-path}:${var.version}
+  # Remove docker image internal all tags
+  remove-image-with-all-tags-internal:
+    - task: remove-docker-image-with-tags
+      cmd:
+        - docker image remove ${docker-internal-image-path}:${var.version}
+        - docker image remove ${docker-internal-image-path}:${var.version-prefix}-latest
+        - docker image remove ${docker-internal-image-path}:latest
+
+  # Build docker image
+  build-image:
+    - task: docker-build
+      cmd:
+        - docker build ${env.PWD} --build-arg GIT_COMMIT=${var.commit-hash} --build-arg BACKUP_RESTORE_CLI_VERSION=${common.backup-restore-cli-version} --build-arg BUILD_DATE=${env.BUILD_DATE} --build-arg IMAGE_BUILD_VERSION=${var.version} --build-arg RSTATE=${var.rstate} --tag ${docker-image-path}:${var.version}
+        - docker image tag ${docker-image-path}:${var.version} ${docker-image-path}:${var.version-prefix}-latest
+        - docker image tag ${docker-image-path}:${var.version} ${docker-image-path}:latest
+
+  # Push docker image
+  push-image-with-all-tags:
+    - task: push-docker-image
+      cmd:
+        - docker push ${docker-image-path}:${var.version}
+        - docker push ${docker-image-path}:${var.version-prefix}-latest
+        - docker push ${docker-image-path}:latest
+  # Remove docker image
+  remove-image:
+    - task: remove-docker-image
+      cmd:
+        - docker image remove ${docker-image-path}:${var.version}
+  remove-image-with-all-tags:
+    - task: remove-docker-image-with-tags
+      cmd:
+        - docker image remove ${docker-image-path}:${var.version}
+        - docker image remove ${docker-image-path}:${var.version-prefix}-latest
+        - docker image remove ${docker-image-path}:latest
+  create-git-tag:
+    - task: create-git-tag
+      docker-image: adp-release-auto
+      docker-flags:
+        - "--env GIT_COMMITTER_NAME='${env.GIT_COMMITTER_NAME}'"
+        - "--env GIT_COMMITTER_EMAIL='${env.GIT_COMMITTER_EMAIL}'"
+      cmd: git tag --annotate ${var.version} --message "Build Version ${var.version} by ${env.AUTHOR_NAME} <${env.AUTHOR_EMAIL}>"
+
+  remove-git-tag:
+    - task: remove-git-tag
+      docker-image: adp-release-auto
+      cmd: git tag --delete ${var.version}
+
+  update-chart-hooks-version-in-repos:
+    - task: update-bro-integration-repo
+      docker-image: adp-release-auto
+      docker-flags:
+        - "--env GERRIT_USERNAME"
+        - "--env GERRIT_PASSWORD"
+      cmd:
+        - "sed -i '/name: eric-enm-chart-hooks$/,/hook-post-weight:.*$/ s/tag: .*/tag: ${var.version}/' eric-enm-bro-integration/chart/eric-enm-bro-integration/values.yaml"
+        - gerrit create-patch
+          --file chart/eric-enm-bro-integration/values.yaml
+          --message "${env.COMMIT_MESSAGE}"
+          --git-repo-local eric-enm-bro-integration
+          --wait-label "Verified"="+1"
+          --debug
+          --email "PDLVANDALS@pdl.internal.ericsson.com"
+
+    - task: update-infra-integration-repo
+      docker-image: adp-release-auto
+      docker-flags:
+        - "--env GERRIT_USERNAME"
+        - "--env GERRIT_PASSWORD"
+      cmd:
+        - "sed -i '/name: eric-enm-chart-hooks$/,/hook-post-weight:.*$/ s/tag: .*/tag: ${var.version}/' eric-enm-infra-integration/chart/eric-enm-infra-integration/values.yaml"
+        - gerrit create-patch
+          --file chart/eric-enm-infra-integration/values.yaml
+          --message "${env.COMMIT_MESSAGE}"
+          --git-repo-local eric-enm-infra-integration
+          --wait-label "Verified"="+1"
+          --debug
+          --email "PDLVANDALS@pdl.internal.ericsson.com"
+
+    - task: update-stateless-integration-repo
+      docker-image: adp-release-auto
+      docker-flags:
+        - "--env GERRIT_USERNAME"
+        - "--env GERRIT_PASSWORD"
+      cmd:
+        - "sed -i '/name: eric-enm-chart-hooks$/,/hook-post-weight:.*$/ s/tag: .*/tag: ${var.version}/' eric-enm-stateless-integration/chart/eric-enm-stateless-integration/values.yaml"
+        - gerrit create-patch
+          --file chart/eric-enm-stateless-integration/values.yaml
+          --message "${env.COMMIT_MESSAGE}"
+          --git-repo-local eric-enm-stateless-integration
+          --wait-label "Verified"="+1"
+          --debug
+          --email "PDLVANDALS@pdl.internal.ericsson.com"
